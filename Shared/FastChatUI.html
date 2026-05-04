@@ -3,8 +3,8 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Portable AI — Fast Chat</title>
-<meta name="description" content="Portable AI Chat — run local LLMs from a USB drive">
+<title>Private Offline AI — GitHub Pages</title>
+<meta name="description" content="Private AI chat page that can run offline and keep chats local per browser">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 
@@ -586,8 +586,11 @@ body{
         <option value="custom">Other Website API</option>
       </select>
       <input id="backend-url" placeholder="https://your-website-api.example.com">
+      <div class="status-row" style="margin-top:6px;">
+        <a id="connect-link" href="#" style="font-size:11px;color:var(--accent-hi);text-decoration:none;" target="_blank" rel="noopener">Open connected website ↗</a>
+      </div>
       <div class="status-row" style="margin-top:4px;">
-        <span style="font-size:11px;color:var(--text-d);">💾 Chats auto-save to USB</span>
+        <span style="font-size:11px;color:var(--text-d);">🔒 Private local-only chat storage</span>
       </div>
     </div>
   </aside>
@@ -618,7 +621,7 @@ body{
     <div id="chat-box">
       <div class="welcome" id="welcome">
         <h2>Ready to Chat</h2>
-        <p>Select a model and start typing.<br>Conversations auto-save to the USB drive.</p>
+        <p>Select a model and start typing.<br>Conversations stay private in your browser on this device.</p>
       </div>
     </div>
 
@@ -663,9 +666,12 @@ body{
 <script>
 'use strict';
 // ── Config ──────────────────────────────────────────────
-const IS_SERVED = location.protocol === 'http:' || location.protocol === 'https:';
-const OLLAMA   = IS_SERVED ? '/ollama' : 'http://127.0.0.1:11434';
-const KIAS     = IS_SERVED ? '/kias' : 'http://127.0.0.1:5050';
+const IS_HTTP = location.protocol === 'http:' || location.protocol === 'https:';
+const IS_LOCAL_FILE = location.protocol === 'file:';
+const IS_GITHUB_PAGES = /github\.io$/i.test(location.hostname);
+const LOCAL_ONLY_MODE = IS_LOCAL_FILE || IS_GITHUB_PAGES;
+const OLLAMA   = IS_HTTP && !IS_GITHUB_PAGES ? '/ollama' : 'http://127.0.0.1:11434';
+const KIAS     = IS_HTTP && !IS_GITHUB_PAGES ? '/kias' : 'http://127.0.0.1:5050';
 
 // ── State ────────────────────────────────────────────────
 let allChats      = [];
@@ -688,18 +694,24 @@ function getBackendBase() {
 
 // ── Persistence ──────────────────────────────────────────
 async function loadChats() {
-  if (!IS_SERVED) return;
+  if (LOCAL_ONLY_MODE) {
+    try { allChats = JSON.parse(localStorage.getItem('privateChats') || '[]'); } catch { allChats = []; }
+    return;
+  }
   try {
     const r = await fetch('/api/chats');
     if (r.ok) allChats = await r.json();
-  } catch {}
+  } catch {
+    try { allChats = JSON.parse(localStorage.getItem('privateChats') || '[]'); } catch { allChats = []; }
+  }
 }
 function saveChats() {
-  if (!IS_SERVED) return;
   clearTimeout(saveTimer);
-  saveTimer = setTimeout(() =>
-    fetch('/api/chats', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(allChats) }).catch(() => {})
-  , 800);
+  saveTimer = setTimeout(() => {
+    localStorage.setItem('privateChats', JSON.stringify(allChats));
+    if (LOCAL_ONLY_MODE) return;
+    fetch('/api/chats', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(allChats) }).catch(() => {});
+  }, 800);
 }
 
 // ── Chat list ─────────────────────────────────────────────
@@ -764,7 +776,7 @@ function showWelcome() {
   document.getElementById('chat-box').innerHTML = `
     <div class="welcome">
       <h2>Ready to Chat</h2>
-      <p>Select a model and start typing.<br>Conversations auto-save to the USB drive.</p>
+      <p>Select a model and start typing.<br>Conversations stay private in your browser on this device.</p>
     </div>`;
 }
 
@@ -865,13 +877,13 @@ async function fetchModels() {
     txt.textContent = `${activeBackend.toUpperCase()} Online — ${d.models.length} model(s)`;
   } catch {
     dot.className = '';
-    txt.textContent = `${activeBackend.toUpperCase()} Offline`;
+    txt.textContent = LOCAL_ONLY_MODE ? `Offline / private mode` : `${activeBackend.toUpperCase()} Offline`;
   }
 }
 
 // ── Hardware stats ───────────────────────────────────────
 async function pollHW() {
-  if (!IS_SERVED) { document.getElementById('hw-offline').textContent = 'Run via server for stats'; document.getElementById('hw-offline').style.display='inline'; return; }
+  if (LOCAL_ONLY_MODE) { document.getElementById('hw-offline').textContent = 'Offline mode'; document.getElementById('hw-offline').style.display='inline'; return; }
   try {
     const r = await fetch('/api/stats');
     if (!r.ok) throw new Error();
@@ -895,7 +907,7 @@ function setBar(type, pct) {
 // ── Global system prompt ─────────────────────────────────
 // ── Global system prompt (saved to USB via /api/settings) ───────
 async function loadGlobalPrompt() {
-  if (IS_SERVED) {
+  if (!LOCAL_ONLY_MODE) {
     try {
       const r = await fetch('/api/settings');
       if (r.ok) {
@@ -920,7 +932,7 @@ async function saveGlobalPrompt() {
   updateGlobalIndicator();
   const status = document.getElementById('global-status');
   try {
-    if (IS_SERVED) {
+    if (!LOCAL_ONLY_MODE) {
       // Load existing settings first so we don't overwrite other keys
       let existing = {};
       try { const r = await fetch('/api/settings'); if (r.ok) existing = await r.json(); } catch {}
@@ -946,7 +958,7 @@ async function clearGlobalPrompt() {
   updateGlobalIndicator();
   const status = document.getElementById('global-status');
   try {
-    if (IS_SERVED) {
+    if (!LOCAL_ONLY_MODE) {
       let existing = {};
       try { const r = await fetch('/api/settings'); if (r.ok) existing = await r.json(); } catch {}
       existing.globalSystemPrompt = '';
@@ -1271,6 +1283,15 @@ function stopGen() { if (abortCtrl) abortCtrl.abort(); }
     localStorage.setItem('backendUrl', backendUrl.value.trim());
     if (activeBackend === 'custom') await fetchModels();
   });
+  const connectLink = document.getElementById('connect-link');
+  function syncConnectLink(){
+    const url = (backendUrl.value||'').trim();
+    connectLink.href = url || '#';
+    connectLink.style.opacity = url ? '1' : '.45';
+    connectLink.style.pointerEvents = url ? 'auto' : 'none';
+  }
+  backendUrl.addEventListener('input', syncConnectLink);
+  syncConnectLink();
   await fetchModels();
   renderList();
   if (allChats.length) switchChat(allChats[0].id);
