@@ -34,7 +34,7 @@ except ImportError:
 # ── Configuration ──────────────────────────────────────────────
 CHAT_SERVER_PORT = 3333
 OLLAMA_HOST = "http://127.0.0.1:11434"
-KIAS_HOST = os.environ.get("KIAS_HOST", "http://127.0.0.1:5050")
+KIAS_HOST = os.environ.get("KIAS_HOST", "https://spaceknight882.github.io/KIAS.exe/kias.exe")
 LLAMA_CPP_MODE = "--llama-cpp" in sys.argv
 if LLAMA_CPP_MODE:
     OLLAMA_HOST = "http://127.0.0.1:8080"
