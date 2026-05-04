@@ -34,6 +34,7 @@ except ImportError:
 # ── Configuration ──────────────────────────────────────────────
 CHAT_SERVER_PORT = 3333
 OLLAMA_HOST = "http://127.0.0.1:11434"
+KIAS_HOST = os.environ.get("KIAS_HOST", "http://127.0.0.1:5050")
 LLAMA_CPP_MODE = "--llama-cpp" in sys.argv
 if LLAMA_CPP_MODE:
     OLLAMA_HOST = "http://127.0.0.1:8080"
@@ -217,6 +218,8 @@ class ChatHandler(http.server.BaseHTTPRequestHandler):
         # Proxy Ollama API
         elif path.startswith("/ollama/"):
             self._proxy_ollama("GET")
+        elif path.startswith("/kias/"):
+            self._proxy_generic("GET", "/kias", KIAS_HOST)
 
         else:
             # Try serving static files from SCRIPT_DIR
@@ -234,6 +237,8 @@ class ChatHandler(http.server.BaseHTTPRequestHandler):
         # Proxy Ollama API
         elif path.startswith("/ollama/"):
             self._proxy_ollama("POST")
+        elif path.startswith("/kias/"):
+            self._proxy_generic("POST", "/kias", KIAS_HOST)
 
         else:
             self.send_response(404)
@@ -244,6 +249,8 @@ class ChatHandler(http.server.BaseHTTPRequestHandler):
         path = urlparse(self.path).path
         if path.startswith("/ollama/"):
             self._proxy_ollama("DELETE")
+        elif path.startswith("/kias/"):
+            self._proxy_generic("DELETE", "/kias", KIAS_HOST)
         else:
             self.send_response(404)
             self._cors_headers()
@@ -373,6 +380,51 @@ class ChatHandler(http.server.BaseHTTPRequestHandler):
             self.wfile.write(json.dumps({"error": str(e)}).encode())
 
     # ── Ollama Proxy (streaming-aware) ─────────────────────────
+    def _proxy_generic(self, method, prefix, target_host):
+        proxy_path = self.path[len(prefix):]
+        target_url = target_host + proxy_path
+        body = None
+        content_length = int(self.headers.get("Content-Length", 0))
+        if content_length > 0:
+            body = self.rfile.read(content_length)
+        try:
+            req = urllib.request.Request(
+                target_url,
+                data=body,
+                method=method,
+                headers={"Content-Type": self.headers.get("Content-Type", "application/json")}
+            )
+            if "Authorization" in self.headers:
+                req.add_header("Authorization", self.headers.get("Authorization"))
+            response = urllib.request.urlopen(req, timeout=600)
+            self.send_response(response.status)
+            for header, value in response.getheaders():
+                lower = header.lower()
+                if lower not in ("transfer-encoding", "connection", "content-length"):
+                    self.send_header(header, value)
+            self._cors_headers()
+            self.end_headers()
+            while True:
+                chunk = response.read(4096)
+                if not chunk:
+                    break
+                self.wfile.write(chunk)
+                self.wfile.flush()
+        except urllib.error.HTTPError as e:
+            self.send_response(e.code)
+            self._cors_headers()
+            self.end_headers()
+            try:
+                self.wfile.write(e.read())
+            except:
+                pass
+        except urllib.error.URLError as e:
+            self.send_response(502)
+            self._cors_headers()
+            self.end_headers()
+            msg = json.dumps({"error": f"Cannot reach backend at {target_host}: {str(e.reason)}"})
+            self.wfile.write(msg.encode())
+
     def _proxy_ollama(self, method):
         """
         Proxy requests from /ollama/* to the local Ollama engine.
